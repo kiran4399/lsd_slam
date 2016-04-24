@@ -14,7 +14,6 @@ example-input datasets, and the generated output as rosbag or .ply point cloud.
 * **Semi-Dense Visual Odometry for a Monocular Camera**, *J. Engel, J. Sturm, D. Cremers*, ICCV '13
 
 
-
 # 1. Quickstart / Minimal Setup
 
 First, install LSD-SLAM following 2.1 or 2.2, depending on your Ubuntu / ROS version. You don't need openFabMap for now.
