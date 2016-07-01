@@ -1,24 +1,34 @@
 cmake_minimum_required(VERSION 2.8.7)
 project(lsd_slam_core)
-include($ENV{ROS_ROOT}/core/rosbuild/rosbuild.cmake)
 
-# Set the build type.  Options are:
-#  Coverage       : w/ debug symbols, w/o optimization, w/ code-coverage
-#  Debug          : w/ debug symbols, w/o optimization
-#  Release        : w/o debug symbols, w/ optimization
+# Set the build type. Options are:
+#  Coverage : w/ debug symbols, w/o optimization, w/ code-coverage
+#  Debug : w/ debug symbols, w/o optimization
+#  Release : w/o debug symbols, w/ optimization
 #  RelWithDebInfo : w/ debug symbols, w/ optimization
-#  MinSizeRel     : w/o debug symbols, w/ optimization, stripped binaries
-set(ROS_BUILD_TYPE Release)
+#  MinSizeRel : w/o debug symbols, w/ optimization, stripped binaries
+set(CMAKE_BUILD_TYPE Release)
 
-rosbuild_init() 
-
-set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
-set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
-set(CMAKE_MODULE_PATH   ${PROJECT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
+find_package(catkin REQUIRED COMPONENTS
+  cv_bridge
+  dynamic_reconfigure
+  image_transport
+  message_generation
+  rosbag
+  roscpp
+  sensor_msgs
+  std_msgs
+)
 
 find_package(Eigen3 REQUIRED)
-find_package(SuiteParse REQUIRED) # Apparently needed by g2o
 find_package(X11 REQUIRED)
+find_package(OpenCV REQUIRED)
+include(cmake/FindG2O.cmake)
+include(cmake/FindSuiteParse.cmake)
+
+message("-- CHOLMOD_INCLUDE_DIR : " ${CHOLMOD_INCLUDE_DIR})
+message("-- CSPARSE_INCLUDE_DIR : " ${CSPARSE_INCLUDE_DIR})
+message("-- G2O_INCLUDE_DIR : " ${G2O_INCLUDE_DIR})
 
 # FabMap
 # uncomment this part to enable fabmap
@@ -27,19 +37,35 @@ find_package(X11 REQUIRED)
 #add_definitions("-DHAVE_FABMAP")
 #set(FABMAP_LIB openFABMAP )
 
-# Dynamic Reconfigure Services
-rosbuild_find_ros_package(dynamic_reconfigure)
-include(${dynamic_reconfigure_PACKAGE_PATH}/cmake/cfgbuild.cmake)
-gencfg()
+generate_dynamic_reconfigure_options(
+  cfg/LSDDebugParams.cfg
+  cfg/LSDParams.cfg
+)
+
+add_message_files(
+  FILES
+  imageAndPoseMsg.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  sensor_msgs
+  geometry_msgs
+)
+
+catkin_package(
+  LIBRARIES lsdslam
+  DEPENDS Eigen SuiteSparse
+  CATKIN_DEPENDS libg2o message_runtime
+)
 
 # SSE flags
-rosbuild_check_for_sse()
 add_definitions("-DUSE_ROS")
 add_definitions("-DENABLE_SSE")
 
 # Also add some useful compiler flag
 set(CMAKE_CXX_FLAGS
-   "${CMAKE_CXX_FLAGS} ${SSE_FLAGS} -march=native  -std=c++0x"
+   "${CMAKE_CXX_FLAGS} -march=native -Wall -std=c++0x"
 ) 
 
 # Set source files
@@ -65,6 +91,7 @@ set(lsd_SOURCE_FILES
   ${PROJECT_SOURCE_DIR}/src/GlobalMapping/g2oTypeSim3Sophus.cpp
   ${PROJECT_SOURCE_DIR}/src/GlobalMapping/TrackableKeyFrameSearch.cpp
 )
+
 set(SOURCE_FILES
   ${lsd_SOURCE_FILES}
   ${PROJECT_SOURCE_DIR}/src/IOWrapper/ROS/ROSImageStreamThread.cpp
@@ -73,26 +100,30 @@ set(SOURCE_FILES
 )
 
 include_directories(
+  include
   ${EIGEN3_INCLUDE_DIR}
+  ${OpenCV_INCLUDE_DIRS}
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/thirdparty/Sophus
   ${CSPARSE_INCLUDE_DIR} #Has been set by SuiteParse
   ${CHOLMOD_INCLUDE_DIR} #Has been set by SuiteParse
 )
 
-
 # build shared library.
-rosbuild_add_library(lsdslam SHARED ${SOURCE_FILES})
-target_link_libraries(lsdslam ${FABMAP_LIB} g2o_core g2o_stuff csparse cxsparse g2o_solver_csparse g2o_csparse_extension g2o_types_sim3 g2o_types_sba X11)
-rosbuild_link_boost(lsdslam thread)
+add_library(lsdslam SHARED ${SOURCE_FILES})
+target_link_libraries(lsdslam ${FABMAP_LIB} ${G2O_LIBRARIES} ${catkin_LIBRARIES} ${OpenCV_LIBS}  csparse cxsparse )
+#rosbuild_link_boost(lsdslam thread)
 
+add_dependencies(lsdslam lsd_slam_core_generate_messages)
+add_dependencies(lsdslam lsd_slam_core_gencfg)
 
 # build live ros node
-rosbuild_add_executable(live_slam src/main_live_odometry.cpp)
-target_link_libraries(live_slam lsdslam)
+add_executable(live_slam src/main_live_odometry.cpp)
+target_link_libraries(live_slam lsdslam ${catkin_LIBRARIES} ${G2O_LIBRARIES} ${OpenCV_LIBS} ${X11_LIBRARIES})
 
 
 # build image node
-rosbuild_add_executable(dataset_slam src/main_on_images.cpp)
-target_link_libraries(dataset_slam lsdslam)
+add_executable(dataset src/main_on_images.cpp)
+target_link_libraries(dataset lsdslam ${catkin_LIBRARIES} ${G2O_LIBRARIES} ${OpenCV_LIBS})
 
+# TODO add INSTALL

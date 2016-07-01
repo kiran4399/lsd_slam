@@ -19,20 +19,26 @@
 */
 
 #include "ROSOutput3DWrapper.h"
-#include "util/SophusUtil.h"
+
 #include <ros/ros.h>
-#include "util/settings.h"
+#include <cv_bridge/cv_bridge.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <std_msgs/Float32MultiArray.h>
 
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 
-#include "std_msgs/Float32MultiArray.h"
+#include "lsd_slam_core/imageAndPoseMsg.h"
 #include "lsd_slam_viewer/keyframeGraphMsg.h"
 #include "lsd_slam_viewer/keyframeMsg.h"
 
+#include "util/settings.h"
+#include "util/SophusUtil.h"
+
 #include "DataStructures/Frame.h"
 #include "GlobalMapping/KeyFrameGraph.h"
-#include "sophus/sim3.hpp"
-#include "geometry_msgs/PoseStamped.h"
 #include "GlobalMapping/g2oTypeSim3Sophus.h"
+#include "sophus/sim3.hpp"
 
 namespace lsd_slam
 {
@@ -56,10 +62,12 @@ ROSOutput3DWrapper::ROSOutput3DWrapper(int width, int height)
 	debugInfo_publisher = nh_.advertise<std_msgs::Float32MultiArray>(debugInfo_channel,1);
 
 	pose_channel = nh_.resolveName("lsd_slam/pose");
-	pose_publisher = nh_.advertise<geometry_msgs::PoseStamped>(pose_channel,1);
+	pose_publisher = nh_.advertise<geometry_msgs::PoseStamped>(pose_channel, 1);
 
+	image_pose_channel = nh_.resolveName("lsd_slam/image_pose");
+	image_pose_publisher = nh_.advertise<lsd_slam_core::imageAndPoseMsg>(image_pose_channel, 1);
 
-	publishLvl=0;
+	publishLvl = 0;
 }
 
 ROSOutput3DWrapper::~ROSOutput3DWrapper()
@@ -96,16 +104,16 @@ void ROSOutput3DWrapper::publishKeyframe(Frame* f)
 
 	const float* idepth = f->idepth(publishLvl);
 	const float* idepthVar = f->idepthVar(publishLvl);
-	const float* color = f->image(publishLvl);
+	const float* color = f->imageRGB(publishLvl);
 
-	for(int idx=0;idx < w*h; idx++)
+	for(int idx=0,idxRGB=0;idx < w*h; idx++,idxRGB+=3)
 	{
 		pc[idx].idepth = idepth[idx];
 		pc[idx].idepth_var = idepthVar[idx];
-		pc[idx].color[0] = color[idx];
-		pc[idx].color[1] = color[idx];
-		pc[idx].color[2] = color[idx];
-		pc[idx].color[3] = color[idx];
+		pc[idx].color[2] = color[idxRGB];
+		pc[idx].color[1] = color[idxRGB+1];
+		pc[idx].color[0] = color[idxRGB+2];
+		pc[idx].color[3] = 100;
 	}
 
 	keyframe_publisher.publish(fMsg);
@@ -115,11 +123,9 @@ void ROSOutput3DWrapper::publishTrackedFrame(Frame* kf)
 {
 	lsd_slam_viewer::keyframeMsg fMsg;
 
-
 	fMsg.id = kf->id();
 	fMsg.time = kf->timestamp();
 	fMsg.isKeyframe = false;
-
 
 	memcpy(fMsg.camToWorld.data(),kf->getScaledCamToWorld().cast<float>().data(),sizeof(float)*7);
 	fMsg.fx = kf->fx(publishLvl);
@@ -132,7 +138,6 @@ void ROSOutput3DWrapper::publishTrackedFrame(Frame* kf)
 	fMsg.pointcloud.clear();
 
 	liveframe_publisher.publish(fMsg);
-
 
 	SE3 camToWorld = se3FromSim3(kf->getScaledCamToWorld());
 
@@ -154,7 +159,20 @@ void ROSOutput3DWrapper::publishTrackedFrame(Frame* kf)
 		pMsg.pose.orientation.w *= -1;
 	}
 
-	pMsg.header.stamp = ros::Time(kf->timestamp());
+	ros::Time timestamp = ros::Time(kf->timestamp());
+
+	cv::Mat ocvImg = kf->imageCv(0);
+	lsd_slam_core::imageAndPoseMsg imgAndPoseMsg;
+
+	sensor_msgs::Image sensorImg;
+	cv_bridge::CvImage cvImg(std_msgs::Header(), "mono8", ocvImg);
+	cvImg.toImageMsg(sensorImg);
+
+	imgAndPoseMsg.image = sensorImg;
+	imgAndPoseMsg.pose = pMsg.pose;
+	image_pose_publisher.publish(imgAndPoseMsg);
+
+	pMsg.header.stamp = timestamp;
 	pMsg.header.frame_id = "world";
 	pose_publisher.publish(pMsg);
 }
